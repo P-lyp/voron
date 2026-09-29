@@ -1,0 +1,12 @@
+# Database binaries
+*.fdb
+*.FDB
+*.gdb
+*.GDB
+
+# Dependencies
+node_modules/
+.env
+dist/
+build/
+.gemini/
