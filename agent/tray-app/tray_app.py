@@ -83,6 +83,56 @@ def find_node_executable():
 
     return "node"
 
+def find_python_gui_executable():
+    """
+    Localiza o interpretador Python para aplicações com interface gráfica (pythonw.exe).
+    Garante que nenhuma janela de console/cmd seja aberta em segundo plano.
+    """
+    # Se estiver rodando como script Python (não PyInstaller congelado)
+    if not getattr(sys, 'frozen', False) and sys.executable:
+        cand = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        if os.path.exists(cand):
+            return cand
+
+    # Procura via PATH
+    cand = shutil.which("pythonw.exe") or shutil.which("pythonw")
+    if cand and os.path.exists(cand):
+        return cand
+
+    # Locais padrões de instalação do Python no Windows
+    known_paths = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python313\pythonw.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python310\pythonw.exe"),
+        r"C:\Python313\pythonw.exe",
+        r"C:\Python312\pythonw.exe",
+        r"C:\Python311\pythonw.exe",
+        r"C:\Python310\pythonw.exe",
+    ]
+    for kp in known_paths:
+        if os.path.exists(kp):
+            return kp
+
+    # Fallback seguro
+    return shutil.which("python.exe") or shutil.which("python") or "pythonw"
+
+def launch_gui_process(cmd_args, cwd=None):
+    """
+    Executa um aplicativo GUI garantindo que nenhuma janela de console
+    (cmd / conhost / terminal) seja exibida ou deixada em segundo plano.
+    """
+    kwargs = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        kwargs["startupinfo"] = si
+    if cwd:
+        kwargs["cwd"] = cwd
+    return subprocess.Popen(cmd_args, **kwargs)
+
 def load_agent_env():
     env_file = os.path.join(AGENT_DIR, ".env")
     config = {
@@ -329,26 +379,50 @@ class AgentTrayApp:
             time.sleep(3)
 
     def open_config(self, icon=None, item=None):
-        config_candidates = [
-            os.path.join(EXE_DIR, "ConfigVoron.exe"),
-            os.path.join(AGENT_DIR, "ConfigVoron.exe"),
-            os.path.join(AGENT_DIR, "..", "ConfigVoron.exe"),
-            os.path.join(EXE_DIR, "ConfigAgente.exe"),
-            os.path.join(AGENT_DIR, "ConfigAgente.exe"),
-            os.path.join(AGENT_DIR, "..", "ConfigAgente.exe"),
-            os.path.join(AGENT_DIR, "config-tool", "config_app.py"),
-        ]
+        is_frozen = getattr(sys, 'frozen', False)
+        config_candidates = []
+
+        if is_frozen:
+            # Em modo compilado (VoronTray.exe), prioriza o executável compilado
+            config_candidates.extend([
+                os.path.join(EXE_DIR, "ConfigVoron.exe"),
+                os.path.join(AGENT_DIR, "ConfigVoron.exe"),
+                os.path.join(AGENT_DIR, "..", "ConfigVoron.exe"),
+                os.path.join(EXE_DIR, "ConfigAgente.exe"),
+                os.path.join(AGENT_DIR, "ConfigAgente.exe"),
+                os.path.join(AGENT_DIR, "..", "ConfigAgente.exe"),
+                os.path.join(AGENT_DIR, "config-tool", "config_app.py"),
+                os.path.join(EXE_DIR, "config-tool", "config_app.py"),
+            ])
+        else:
+            # Em modo de desenvolvimento Python, prioriza o script para refletir alterações
+            config_candidates.extend([
+                os.path.join(AGENT_DIR, "config-tool", "config_app.py"),
+                os.path.join(EXE_DIR, "config-tool", "config_app.py"),
+                os.path.join(EXE_DIR, "ConfigVoron.exe"),
+                os.path.join(AGENT_DIR, "ConfigVoron.exe"),
+                os.path.join(AGENT_DIR, "..", "ConfigVoron.exe"),
+                os.path.join(EXE_DIR, "ConfigAgente.exe"),
+                os.path.join(AGENT_DIR, "ConfigAgente.exe"),
+                os.path.join(AGENT_DIR, "..", "ConfigAgente.exe"),
+            ])
+
         for c in config_candidates:
             norm = os.path.abspath(c)
             if os.path.exists(norm):
+                log_tray(f"Abrindo configurador: {norm}")
+                target_dir = os.path.dirname(norm)
                 if norm.endswith(".exe"):
-                    subprocess.Popen([norm])
+                    launch_gui_process([norm], cwd=target_dir)
                 else:
-                    subprocess.Popen(["python", norm])
+                    pyw = find_python_gui_executable()
+                    log_tray(f"Executando script via interpretador GUI: {pyw}")
+                    launch_gui_process([pyw, norm], cwd=target_dir)
                 return
 
+        log_tray("Nenhum executável ou script de configuração foi localizado.")
         if self.icon:
-            self.icon.notify("ConfigVoron.exe não localizado.", "Aviso")
+            self.icon.notify("Configurador (ConfigVoron) não localizado.", "Aviso")
 
     def open_logs(self, icon=None, item=None):
         log_files = [
