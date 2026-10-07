@@ -1,0 +1,15 @@
+{
+  "name": "Voron - Agente Local",
+  "version": "1.0.0",
+  "sha256": "413e0b5d3a3a0cb0609c970014db7bb9d53a574ca58ec7076f86048004d28ebc",
+  "sizeBytes": 23124,
+  "releaseDate": "2026-10-07T15:49:57.380Z",
+  "isMandatory": false,
+  "downloadUrl": "/api/agent/update/download",
+  "changelog": [
+    "Release Voron - Agente Local v1.0.0",
+    "Compatibilidade nativa com Firebird 5.0 (TGA.FDB)",
+    "Suporte a auto-update atomico com rollback seguro e healthcheck",
+    "Executavel VoronTray e servico Voron aprimorados"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@ai-db/agent",
+  "version": "1.0.0",
+  "description": "Voron - Agente Local On-Premise para conexao com Firebird 5.0 e tunel WebSocket",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "inspect": "tsx src/scripts/inspect-db.ts",
+    "build": "tsc && node -e \"const fs=require('fs'),path=require('path'); const d=path.resolve('dist/agent/src'); fs.mkdirSync(d,{recursive:true}); fs.copyFileSync(path.resolve('src/db-bridge.py'), path.join(d,'db-bridge.py'));\""
+  },
+  "dependencies": {
+    "@ai-db/shared": "*",
+    "dotenv": "^16.4.7",
+    "node-firebird": "^1.1.9",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

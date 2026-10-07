@@ -1,0 +1,9 @@
+{
+  "name": "@ai-db/shared",
+  "version": "1.0.0",
+  "main": "types.ts",
+  "types": "types.ts",
+  "scripts": {
+    "build": "node -e \"process.exit(0)\""
+  }
+}

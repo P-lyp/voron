@@ -1,0 +1,18 @@
+<service>
+  <id>AIDBAgentService</id>
+  <name>Voron - Agente Local</name>
+  <description>Servico Voron em segundo plano para integracao continua do banco de dados Firebird.</description>
+  <executable>node.exe</executable>
+  <arguments>dist/agent/src/index.js</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="15 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+</service>

@@ -1,12 +1,61 @@
-# Database binaries
+# Dependências
+node_modules/
+package-lock.json.bak
+
+# Builds e Distribuição
+dist/
+build/
+*.egg-info/
+
+# Executáveis e Binários compilados
+*.exe
+*.dll
+*.so
+*.dylib
+*.msi
+
+# Arquivos de Release Compactados e Bundles temporários
+*.zip
+*.tar.gz
+*.7z
+.staging-agent-bundle/
+
+# Bancos de dados locais e Firebird (Arquivos pesados e dados reais)
 *.fdb
 *.FDB
 *.gdb
 *.GDB
+*.sqlite
+*.sqlite3
+*.db
 
-# Dependencies
-node_modules/
+# Variáveis de ambiente e Segredos (NUNCA comitar)
 .env
-dist/
-build/
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs e Processos
+*.log
+logs/
+tray_stderr.txt
+tray_stdout.txt
+
+# Python (Caches e builds)
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+
+# Rascunhos locais e Redesigns temporários
+temp_*.png
+stitch_app_ui_redesign_variation/
+
+# Sistema Operacional e Editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
 .gemini/

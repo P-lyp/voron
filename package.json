@@ -1,0 +1,21 @@
+{
+  "name": "ai-db-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "agent",
+    "backend",
+    "mobile"
+  ],
+  "scripts": {
+    "agent:dev": "npm --workspace=agent run dev",
+    "backend:dev": "npm --workspace=backend run dev",
+    "backend:build": "npm --workspace=backend run build",
+    "backend:start": "npm --workspace=backend run start",
+    "mobile:dev": "npm --workspace=mobile run dev",
+    "mobile:build": "npm --workspace=mobile run build",
+    "package:agent": "tsx scripts/package-agent.ts",
+    "build:installer": "\"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe\" agent/installer.iss"
+  }
+}
