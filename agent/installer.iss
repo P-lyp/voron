@@ -89,26 +89,25 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Configurar Agente Voron"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-; Registra a bandeja para inicializar junto com a sessao do usuario se a task estiver marcada
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "VoronAgentTray"; ValueData: """{app}\{#MyTrayExeName}"""; Tasks: autostart; Flags: uninsdeletevalue
+; Registra a bandeja para inicializar com o Windows para qualquer usuario da maquina (HKLM)
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "VoronAgentTray"; ValueData: """{app}\{#MyTrayExeName}"""; Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
 ; 1. Registra e inicia o servico do Windows silenciosamente
 Filename: "{app}\{#MyServiceExeName}"; Parameters: "install"; StatusMsg: "Registrando Servico do Windows..."; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyServiceExeName}"; Parameters: "start"; StatusMsg: "Iniciando Servico do Agente..."; Flags: runhidden waituntilterminated
 
-; 2. Abre a bandeja do agente na sessao atual do usuario
-Filename: "{app}\{#MyTrayExeName}"; Description: "Iniciar monitor da bandeja do relogio"; Flags: nowait postinstall skipifsilent
+; 2. Abre a bandeja do agente em segundo plano
+Filename: "{app}\{#MyTrayExeName}"; Flags: nowait
 
 ; 3. Opcao final para o tecnico ja abrir a tela de configuracao do banco Firebird
-Filename: "{app}\{#MyAppExeName}"; Description: "Abrir o Configurador agora para apontar o banco Firebird"; Flags: postinstall skipifsilent nowait checked
+Filename: "{app}\{#MyAppExeName}"; Description: "Abrir o Configurador agora para apontar o banco Firebird"; Flags: postinstall skipifsilent nowait
 
 [UninstallRun]
 ; Procedimentos limpos executados automaticamente ao desinstalar pelo Windows
-Filename: "taskkill.exe"; Parameters: "/F /IM {#MyTrayExeName}"; Flags: runhidden
-Filename: "taskkill.exe"; Parameters: "/F /IM VoronTray.exe"; Flags: runhidden
-Filename: "taskkill.exe"; Parameters: "/F /IM AgentTray.exe"; Flags: runhidden
-Filename: "taskkill.exe"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden
-Filename: "taskkill.exe"; Parameters: "/F /IM ConfigAgente.exe"; Flags: runhidden
-Filename: "{app}\{#MyServiceExeName}"; Parameters: "stop"; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyServiceExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated
+Filename: "taskkill.exe"; Parameters: "/F /IM {#MyTrayExeName}"; Flags: runhidden; RunOnceId: "KillTray"
+Filename: "taskkill.exe"; Parameters: "/F /IM AgentTray.exe"; Flags: runhidden; RunOnceId: "KillLegacyTray"
+Filename: "taskkill.exe"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden; RunOnceId: "KillConfig"
+Filename: "taskkill.exe"; Parameters: "/F /IM ConfigAgente.exe"; Flags: runhidden; RunOnceId: "KillLegacyConfig"
+Filename: "{app}\{#MyServiceExeName}"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
+Filename: "{app}\{#MyServiceExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
