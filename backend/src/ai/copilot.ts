@@ -338,10 +338,17 @@ export async function askCopilot(
     };
   }
 
-  // Modelos suportados no SDK oficial @google/genai com base no volume de cotas (RPD)
+  // Modelos suportados no SDK oficial @google/genai com base no volume de cotas (RPD/RPM)
   const defaultModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const candidateModels = Array.from(
-    new Set([defaultModel, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-flash'])
+    new Set([
+      defaultModel,
+      'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+    ])
   );
 
   // Sliding window enxuta: últimos 4 turnos sem reenviar tabelas antigas

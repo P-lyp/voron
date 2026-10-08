@@ -1,5 +1,5 @@
 // Voron — Service Worker Ultraleve para Suporte PWA
-const CACHE_NAME = 'voron-pwa-v1';
+const CACHE_NAME = 'voron-pwa-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -49,8 +49,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. Bypass imediato (Network Only) para APIs corporativas e Supabase
+  // 2. Bypass imediato (Network Only) para ambiente de desenvolvimento Vite, HMR, APIs corporativas e Supabase
+  const isDevHost = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.port === '5173';
+  const isDevResource =
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/node_modules/') ||
+    url.pathname.includes('vite') ||
+    url.searchParams.has('t') ||
+    url.searchParams.has('token') ||
+    url.searchParams.has('v');
+
   if (
+    isDevHost ||
+    isDevResource ||
     url.pathname.startsWith('/api/') ||
     url.hostname.includes('supabase.co') ||
     url.protocol === 'ws:' ||
