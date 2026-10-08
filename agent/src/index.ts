@@ -23,7 +23,7 @@ lockServer.on('error', (err: any) => {
 
 const companyId = process.env.COMPANY_ID || 'empresa-piloto-001';
 const agentToken = process.env.AGENT_TOKEN || 'token-secreto-agente-001';
-const gatewayUrl = process.env.CLOUD_GATEWAY_URL || 'ws://localhost:3001/agent-tunnel';
+const gatewayUrl = process.env.CLOUD_GATEWAY_URL || 'wss://voronapi.onrender.com/agent-tunnel';
 
 console.log('==================================================');
 console.log('VORON - AGENTE LOCAL (FIREBIRD 5.0)');

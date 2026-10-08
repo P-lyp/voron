@@ -36,7 +36,7 @@ def load_env(filepath):
         "FIREBIRD_PASSWORD": "masterkey",
         "COMPANY_ID": "empresa-piloto-001",
         "AGENT_TOKEN": "token-secreto-agente-001",
-        "CLOUD_GATEWAY_URL": "ws://localhost:3001/agent-tunnel",
+        "CLOUD_GATEWAY_URL": "wss://voronapi.onrender.com/agent-tunnel",
     }
 
     if os.path.exists(filepath):
@@ -63,7 +63,7 @@ def save_env(filepath, config):
         "\n",
         f"COMPANY_ID={config.get('COMPANY_ID', 'empresa-piloto-001')}\n",
         f"AGENT_TOKEN={config.get('AGENT_TOKEN', 'token-secreto-agente-001')}\n",
-        f"CLOUD_GATEWAY_URL={config.get('CLOUD_GATEWAY_URL', 'ws://localhost:3001/agent-tunnel')}\n",
+        f"CLOUD_GATEWAY_URL={config.get('CLOUD_GATEWAY_URL', 'wss://voronapi.onrender.com/agent-tunnel')}\n",
     ]
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     with open(filepath, 'w', encoding='utf-8') as f:
@@ -178,7 +178,7 @@ class ConfigApp(tk.Tk):
         self.ent_token.grid(row=1, column=1, sticky='w', pady=4)
 
         ttk.Label(cloud_frame, text="Gateway Nuvem:").grid(row=2, column=0, sticky='w', pady=4)
-        self.var_gateway = tk.StringVar(value=self.config_data.get("CLOUD_GATEWAY_URL", "ws://localhost:3001/agent-tunnel"))
+        self.var_gateway = tk.StringVar(value=self.config_data.get("CLOUD_GATEWAY_URL", "wss://voronapi.onrender.com/agent-tunnel"))
         self.ent_gateway = ttk.Entry(cloud_frame, textvariable=self.var_gateway)
         self.ent_gateway.grid(row=2, column=1, sticky='ew', pady=4)
 
