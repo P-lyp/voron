@@ -109,7 +109,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 // ==========================================
-// 5. Suporte a Web Push Notifications (PWA)
+// 5. Suporte Avançado a Web Push Notifications (PWA)
 // ==========================================
 self.addEventListener('push', (event) => {
   if (!event.data) {
@@ -118,44 +118,100 @@ self.addEventListener('push', (event) => {
 
   try {
     const payload = event.data.json();
-    const title = payload.title || 'Voron';
+    const title = payload.title || 'Voron ERP';
+
+    // Padrões de vibração personalizados por severidade/tipo
+    let vibratePattern = [100, 50, 100];
+    if (payload.tipo === 'offline') {
+      vibratePattern = [200, 100, 200, 100, 300]; // Padrão urgente de queda
+    } else if (payload.tipo === 'meta' || payload.tipo === 'pedido_expressivo') {
+      vibratePattern = [80, 40, 80, 40, 120]; // Padrão vibrante de comemoração
+    }
+
     const options = {
       body: payload.body || '',
       icon: payload.icon || '/icon-192.png',
       badge: payload.badge || '/favicon-32x32.png',
-      vibrate: [100, 50, 100],
-      tag: payload.tipo ? `voron-${payload.tipo}` : 'voron-alert',
-      renotify: true,
+      image: payload.image || undefined,
+      vibrate: vibratePattern,
+      tag: payload.tag || (payload.tipo ? `voron-${payload.tipo}` : 'voron-alert'),
+      renotify: payload.renotify !== false,
+      requireInteraction: Boolean(payload.requireInteraction),
+      silent: Boolean(payload.silent),
+      actions: Array.isArray(payload.actions) ? payload.actions : [],
       data: {
         url: payload.url || '/?tab=dashboard',
         tipo: payload.tipo,
+        actions: payload.actions,
+        timestamp: payload.timestamp || Date.now(),
         ...payload.data,
       },
     };
 
-    event.waitUntil(self.registration.showNotification(title, options));
+    // Notifica simultaneamente abas ativas abertas via postMessage
+    const notifyClientsPromise = self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clients) => {
+        for (const client of clients) {
+          client.postMessage({
+            type: 'PUSH_NOTIFICATION_RECEIVED',
+            payload: {
+              title,
+              ...options,
+            },
+          });
+        }
+      })
+      .catch(() => {});
+
+    event.waitUntil(
+      Promise.all([
+        self.registration.showNotification(title, options),
+        notifyClientsPromise,
+      ])
+    );
   } catch (err) {
     console.warn('[Voron SW] Erro ao processar payload da notificação push:', err);
   }
 });
 
-// Ação de clique na notificação: foca aba aberta ou navega para o app
+// Ação de clique na notificação ou em botões de ação interativos
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || '/';
+
+  let targetUrl = event.notification.data?.url || '/';
+
+  // Trata ações interativas específicas disparadas pelos botões do push
+  if (event.action) {
+    if (event.action === 'check_status' || event.action === 'status') {
+      targetUrl = '/?tab=admin';
+    } else if (event.action === 'open_dashboard' || event.action === 'dashboard') {
+      targetUrl = '/?tab=dashboard';
+    } else if (event.action === 'open_ranking' || event.action === 'ranking') {
+      targetUrl = '/?tab=dashboard&view=ranking';
+    }
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // Se já existe uma aba aberta do Voron, foca nela
+      // 1. Se já existe uma aba/janela aberta do Voron, foca nela e envia mensagem
       for (const client of clientList) {
         if ('focus' in client) {
+          client.postMessage({
+            type: 'NOTIFICATION_CLICKED',
+            url: targetUrl,
+            action: event.action,
+            data: event.notification.data,
+          });
+
           if ('navigate' in client && targetUrl !== '/') {
             client.navigate(targetUrl);
           }
           return client.focus();
         }
       }
-      // Se não há aba aberta, abre uma nova
+
+      // 2. Se o app estiver totalmente fechado, abre uma nova janela
       if (self.clients.openWindow) {
         return self.clients.openWindow(targetUrl);
       }

@@ -3,6 +3,27 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from PIL import Image, ImageTk
+
+# Resolve o caminho de assets de icones
+def get_asset_path(filename):
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        bundle_path = os.path.join(sys._MEIPASS, 'assets', filename)
+        if os.path.exists(bundle_path):
+            return bundle_path
+
+    base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base_dir, "assets", filename),
+        os.path.join(base_dir, "..", "assets", filename),
+        os.path.join(base_dir, filename),
+        os.path.join(base_dir, "..", filename),
+        r"C:\Users\Felipe\Desktop\Programação\AI DB\agent\assets" + "\\" + filename,
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
 
 # Resolve o caminho do arquivo .env
 def get_env_path():
@@ -73,14 +94,32 @@ class ConfigApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("Configurador do Agente Local ERP - Firebird")
+        self.title("Voron - Agente Local (Configurações)")
         self.geometry("680x560")
         self.minsize(620, 520)
 
         self.env_path = get_env_path()
         self.config_data = load_env(self.env_path)
 
+        self.setup_window_icon()
         self.setup_ui()
+
+    def setup_window_icon(self):
+        ico_path = get_asset_path("config_voron.ico")
+        if ico_path and os.path.exists(ico_path):
+            try:
+                self.iconbitmap(default=ico_path)
+            except Exception as e:
+                pass
+
+        png_path = get_asset_path("config_voron.png")
+        if png_path and os.path.exists(png_path):
+            try:
+                img = Image.open(png_path).resize((64, 64), Image.Resampling.LANCZOS)
+                self._app_icon_photo = ImageTk.PhotoImage(img)
+                self.iconphoto(False, self._app_icon_photo)
+            except Exception as e:
+                pass
 
     def setup_ui(self):
         # Configurar estilos ttk
@@ -101,13 +140,26 @@ class ConfigApp(tk.Tk):
         main_frame = ttk.Frame(self, padding="16 12 16 12")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Cabeçalho
+        # Cabeçalho com Ícone Oficial Voron + Engrenagem
         header_frame = ttk.Frame(main_frame)
-        header_frame.pack(fill=tk.X, pady=(0, 10))
+        header_frame.pack(fill=tk.X, pady=(0, 12))
 
-        ttk.Label(header_frame, text="Configurações do Voron - Agente Local", style='Header.TLabel').pack(anchor='w')
+        png_path = get_asset_path("config_voron.png")
+        if png_path and os.path.exists(png_path):
+            try:
+                h_img = Image.open(png_path).resize((44, 44), Image.Resampling.LANCZOS)
+                self._header_icon = ImageTk.PhotoImage(h_img)
+                lbl_icon = ttk.Label(header_frame, image=self._header_icon)
+                lbl_icon.pack(side=tk.LEFT, padx=(0, 12))
+            except Exception:
+                pass
+
+        header_text_frame = ttk.Frame(header_frame)
+        header_text_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        ttk.Label(header_text_frame, text="Configurações do Voron - Agente Local", style='Header.TLabel').pack(anchor='w')
         ttk.Label(
-            header_frame,
+            header_text_frame,
             text=f"Arquivo de configuração ativo: {self.env_path}",
             style='SubHeader.TLabel'
         ).pack(anchor='w', pady=(2, 0))
@@ -266,6 +318,12 @@ class ConfigApp(tk.Tk):
             messagebox.showwarning("Aviso", "O caminho do banco de dados não pode ficar vazio.")
             return
 
+        gw_url = self.var_gateway.get().strip()
+        if gw_url.startswith("ws://") and not any(h in gw_url for h in ["localhost", "127.0.0.1"]):
+            gw_url = "wss://" + gw_url[5:]
+        elif gw_url.startswith("wss://") and any(h in gw_url for h in ["localhost", "127.0.0.1"]):
+            gw_url = "ws://" + gw_url[6:]
+
         new_config = {
             "FIREBIRD_HOST": self.var_host.get().strip(),
             "FIREBIRD_PORT": self.var_port.get().strip(),
@@ -274,15 +332,28 @@ class ConfigApp(tk.Tk):
             "FIREBIRD_PASSWORD": self.var_pass.get().strip(),
             "COMPANY_ID": self.var_company.get().strip(),
             "AGENT_TOKEN": self.var_token.get().strip(),
-            "CLOUD_GATEWAY_URL": self.var_gateway.get().strip(),
+            "CLOUD_GATEWAY_URL": gw_url,
         }
 
         try:
             save_env(self.env_path, new_config)
             self.lbl_status.config(text="Configurações salvas com sucesso!", foreground='#0f763e')
+
+            # Reinicia processos do agente em segundo plano para recarregar o novo .env imediatamente
+            try:
+                import subprocess
+                ps_cmd = (
+                    "Get-WmiObject Win32_Process -Filter \"Name = 'node.exe'\" -ErrorAction SilentlyContinue | "
+                    "Where-Object { $_.CommandLine -like '*dist*agent*index.js*' -or $_.CommandLine -like '*src*index.ts*' } | "
+                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+                )
+                subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
+            except:
+                pass
+
             messagebox.showinfo(
                 "Configurações Salvas",
-                f"As configurações foram gravadas com sucesso no arquivo:\n{self.env_path}\n\nO Agente Local carregará os novos parâmetros na próxima consulta ou reinicialização."
+                f"As configurações foram gravadas com sucesso no arquivo:\n{self.env_path}\n\nO Agente Local foi reiniciado para aplicar os novos parâmetros imediatamente."
             )
         except Exception as e:
             messagebox.showerror("Erro ao Salvar", f"Não foi possível salvar o arquivo:\n{e}")

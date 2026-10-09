@@ -638,7 +638,25 @@ export class CompanyService {
     const cleanEmail = email.trim().toLowerCase();
     const resolvedName = fullName?.trim() || cleanEmail.split('@')[0];
 
-    // Verifica se já existe perfil
+    // 1. Prioriza RPC com privilégios de SECURITY DEFINER (imune a bloqueios de RLS no anon key)
+    try {
+      const { data: rpcProfile, error: rpcErr } = await supabase.rpc('sync_user_profile_rpc', {
+        p_user_id: userId,
+        p_email: cleanEmail,
+        p_full_name: resolvedName,
+      });
+
+      if (!rpcErr && rpcProfile) {
+        return rpcProfile as UserProfileDTO;
+      }
+      if (rpcErr) {
+        console.warn('[CompanyService] Erro ao sincronizar via sync_user_profile_rpc:', rpcErr.message);
+      }
+    } catch (err: any) {
+      console.warn('[CompanyService] Falha inesperada no RPC sync_user_profile_rpc:', err.message);
+    }
+
+    // 2. Fallback direto se o client estiver com permissões de service_role
     const { data: existing } = await supabase
       .from('user_profiles')
       .select('*')
@@ -720,7 +738,7 @@ export class CompanyService {
       .single();
 
     if (insErr || !inserted) {
-      console.warn('[CompanyService] Falha ao criar user_profile:', insErr?.message);
+      console.warn('[CompanyService] Falha ao criar user_profile via fallback:', insErr?.message);
       return {
         id: userId,
         companyId,
@@ -745,6 +763,18 @@ export class CompanyService {
   }
 
   public async getUserProfile(userId: string): Promise<UserProfileDTO | null> {
+    // 1. Tenta via RPC com privilégios de SECURITY DEFINER
+    try {
+      const { data: rpcProfile, error: rpcErr } = await supabase.rpc('get_user_profile_rpc', {
+        p_user_id: userId,
+      });
+
+      if (!rpcErr && rpcProfile) {
+        return rpcProfile as UserProfileDTO;
+      }
+    } catch {}
+
+    // 2. Fallback via consulta direta
     const { data, error } = await supabase
       .from('user_profiles')
       .select('*')
@@ -771,6 +801,18 @@ export class CompanyService {
       throw new Error('Código de ativação inválido ou empresa inativa.');
     }
 
+    // 1. Tenta via RPC com SECURITY DEFINER
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('claim_company_with_code_rpc', {
+        p_user_id: userId,
+        p_company_id: company.id,
+      });
+      if (!rpcErr && rpcData) {
+        return { success: true, company, profile: rpcData as UserProfileDTO };
+      }
+    } catch {}
+
+    // 2. Fallback via query direta
     const { data: updatedProfile, error } = await supabase
       .from('user_profiles')
       .update({
@@ -805,6 +847,20 @@ export class CompanyService {
     const company = await this.getCompanyBySlug(companySlug);
     if (!company || !company.id) return { users: [], invites: [] };
 
+    // 1. Tenta via RPC com SECURITY DEFINER
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('get_company_users_and_invites_rpc', {
+        p_company_id: company.id,
+      });
+      if (!rpcErr && rpcData && typeof rpcData === 'object') {
+        return {
+          users: (rpcData as any).users || [],
+          invites: (rpcData as any).invites || [],
+        };
+      }
+    } catch {}
+
+    // 2. Fallback via query direta
     const [{ data: usersData }, { data: invitesData }] = await Promise.all([
       supabase
         .from('user_profiles')
@@ -854,7 +910,20 @@ export class CompanyService {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // Se já houver usuário cadastrado com esse email, já atualiza direto o perfil
+    // 1. Tenta via RPC com SECURITY DEFINER
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('create_company_invite_rpc', {
+        p_company_id: company.id,
+        p_email: cleanEmail,
+        p_role: role,
+        p_erp_vendedor_id: erpVendedorId || null,
+      });
+      if (!rpcErr && rpcData) {
+        return rpcData as CompanyInviteDTO;
+      }
+    } catch {}
+
+    // 2. Fallback via query direta
     const { data: existingUser } = await supabase
       .from('user_profiles')
       .select('*')
@@ -884,7 +953,6 @@ export class CompanyService {
       };
     }
 
-    // Senão, insere na tabela de convites pendentes
     const { data: created, error } = await supabase
       .from('company_invites')
       .upsert({
@@ -911,11 +979,33 @@ export class CompanyService {
   }
 
   public async deleteCompanyInvite(inviteId: string): Promise<boolean> {
+    // 1. Tenta via RPC com SECURITY DEFINER
+    try {
+      const { data, error } = await supabase.rpc('delete_company_invite_rpc', {
+        p_invite_id: inviteId,
+      });
+      if (!error && data !== false) return true;
+    } catch {}
+
+    // 2. Fallback via query direta
     const { error } = await supabase.from('company_invites').delete().eq('id', inviteId);
     return !error;
   }
 
   public async updateUserRole(userId: string, role: UserRole, erpVendedorId?: string): Promise<UserProfileDTO> {
+    // 1. Tenta via RPC com SECURITY DEFINER
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('update_user_role_rpc', {
+        p_user_id: userId,
+        p_role: role,
+        p_erp_vendedor_id: erpVendedorId || null,
+      });
+      if (!rpcErr && rpcData) {
+        return rpcData as UserProfileDTO;
+      }
+    } catch {}
+
+    // 2. Fallback via query direta
     const { data, error } = await supabase
       .from('user_profiles')
       .update({
@@ -1446,7 +1536,7 @@ export class CompanyService {
 
   private getDefaultCompany(slug: string): CompanyDTO {
     return {
-      id: 'default-uuid-piloto',
+      id: '4c510514-e374-4e51-a9c6-288cbb6f9698',
       slug,
       name: slug === 'empresa-piloto-001' ? 'Empresa Piloto' : slug,
       isActive: true,

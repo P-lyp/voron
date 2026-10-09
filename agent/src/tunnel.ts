@@ -46,10 +46,27 @@ export class AgentTunnel {
   private connect(): void {
     if (this.isClosing) return;
 
-    const version = this.options.agentVersion || process.env.AGENT_VERSION || '1.0.0';
-    console.log(`Conectando ao Gateway em nuvem: ${this.options.gatewayUrl} (Voron - Agente Local v${version})...`);
+    let targetGatewayUrl = (this.options.gatewayUrl || '').trim();
+    // Auto-correção inteligente de protocolo WebSocket:
+    if (
+      targetGatewayUrl.startsWith('ws://') &&
+      !targetGatewayUrl.includes('localhost') &&
+      !targetGatewayUrl.includes('127.0.0.1')
+    ) {
+      console.log('[Seguranca] Auto-atualizando protocolo do gateway de ws:// para wss:// para conexao remota segura.');
+      targetGatewayUrl = targetGatewayUrl.replace(/^ws:\/\//i, 'wss://');
+    } else if (
+      targetGatewayUrl.startsWith('wss://') &&
+      (targetGatewayUrl.includes('localhost') || targetGatewayUrl.includes('127.0.0.1'))
+    ) {
+      console.log('[Desenvolvimento] Ajustando protocolo local de wss:// para ws:// (localhost nao utiliza SSL).');
+      targetGatewayUrl = targetGatewayUrl.replace(/^wss:\/\//i, 'ws://');
+    }
 
-    this.ws = new WebSocket(this.options.gatewayUrl, {
+    const version = this.options.agentVersion || process.env.AGENT_VERSION || '1.0.0';
+    console.log(`Conectando ao Gateway em nuvem: ${targetGatewayUrl} (Voron - Agente Local v${version})...`);
+
+    this.ws = new WebSocket(targetGatewayUrl, {
       headers: {
         'x-company-id': this.options.companyId,
         'x-agent-token': this.options.agentToken,

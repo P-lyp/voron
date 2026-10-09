@@ -105,33 +105,20 @@ export function registerPwaServiceWorker(): void {
     return;
   }
 
-  // Em ambiente de desenvolvimento local (Vite dev server), desregistra qualquer Service Worker ativo
-  // e remove caches antigos para garantir que HMR e imports de módulos funcionem sem conflitos de cache.
-  if (import.meta.env.DEV) {
-    navigator.serviceWorker.getRegistrations().then((registrations) => {
-      for (const reg of registrations) {
-        reg.unregister().catch(() => {});
-      }
-    }).catch(() => {});
-
-    if ('caches' in window) {
-      caches.keys().then((names) => {
-        for (const name of names) {
-          caches.delete(name).catch(() => {});
-        }
-      }).catch(() => {});
-    }
-    return;
-  }
-
-  window.addEventListener('load', () => {
+  const doRegister = () => {
     navigator.serviceWorker
-      .register('/sw.js')
+      .register('/sw.js', { scope: '/' })
       .then((reg) => {
         console.log('[Voron PWA] Service Worker registrado com sucesso:', reg.scope);
       })
       .catch((err) => {
         console.warn('[Voron PWA] Falha ao registrar Service Worker:', err);
       });
-  });
+  };
+
+  if (document.readyState === 'complete') {
+    doRegister();
+  } else {
+    window.addEventListener('load', doRegister);
+  }
 }

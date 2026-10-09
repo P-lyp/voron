@@ -14,6 +14,7 @@ import {
   CustomerErpDTO,
   CheckEmailResultDTO,
   AppNotificationDTO,
+  NotificationFilterDTO,
 } from '@ai-db/shared';
 import { supabase } from './supabase.js';
 
@@ -36,6 +37,14 @@ async function authFetch(input: string | URL, init: RequestInit = {}): Promise<R
   const headers = new Headers(init.headers || {});
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  // Anexa o contexto da empresa selecionada quando disponível no client
+  if (typeof window !== 'undefined' && !headers.has('x-company-id')) {
+    const saved = localStorage.getItem('ai_db_selected_company');
+    if (saved && saved !== 'null' && saved !== 'undefined') {
+      headers.set('x-company-id', saved);
+    }
   }
 
   return fetch(input, {
@@ -534,7 +543,7 @@ export async function fetchVapidPublicKey(): Promise<string> {
   return data.publicKey;
 }
 
-export async function registerPushSubscription(subscription: PushSubscription): Promise<boolean> {
+export async function registerPushSubscription(subscription: PushSubscription, companyId?: string): Promise<boolean> {
   const rawSub = subscription.toJSON();
   if (!rawSub.endpoint || !rawSub.keys?.p256dh || !rawSub.keys?.auth) {
     throw new Error('Assinatura Push incompleta');
@@ -550,6 +559,7 @@ export async function registerPushSubscription(subscription: PushSubscription): 
         auth: rawSub.keys.auth,
       },
       userAgent: navigator.userAgent,
+      companyId,
     }),
   });
 
@@ -569,13 +579,40 @@ export async function unregisterPushSubscription(endpoint: string): Promise<bool
   return res.ok;
 }
 
-export async function fetchNotifications(): Promise<AppNotificationDTO[]> {
-  const res = await authFetch(`${API_BASE}/notifications`);
+export async function fetchNotifications(
+  companyIdOrFilter?: string | (NotificationFilterDTO & { companyId?: string })
+): Promise<AppNotificationDTO[]> {
+  const query = new URLSearchParams();
+
+  if (typeof companyIdOrFilter === 'string') {
+    if (companyIdOrFilter && companyIdOrFilter !== 'null') {
+      query.set('companyId', companyIdOrFilter);
+    }
+  } else if (companyIdOrFilter) {
+    if (companyIdOrFilter.companyId && companyIdOrFilter.companyId !== 'null') {
+      query.set('companyId', companyIdOrFilter.companyId);
+    }
+    if (companyIdOrFilter.limit) query.set('limit', String(companyIdOrFilter.limit));
+    if (companyIdOrFilter.offset) query.set('offset', String(companyIdOrFilter.offset));
+    if (companyIdOrFilter.unreadOnly) query.set('unreadOnly', 'true');
+    if (companyIdOrFilter.tipo) query.set('tipo', companyIdOrFilter.tipo);
+  }
+
+  const qs = query.toString();
+  const res = await authFetch(`${API_BASE}/notifications${qs ? `?${qs}` : ''}`);
   if (!res.ok) {
     return [];
   }
   const data = await res.json();
   return data.notifications || [];
+}
+
+export async function fetchUnreadNotificationCount(companyId?: string): Promise<number> {
+  const params = companyId && companyId !== 'null' ? `?companyId=${encodeURIComponent(companyId)}` : '';
+  const res = await authFetch(`${API_BASE}/notifications/unread-count${params}`);
+  if (!res.ok) return 0;
+  const data = await res.json();
+  return data.count || 0;
 }
 
 export async function markNotificationAsRead(id: string): Promise<boolean> {
@@ -592,11 +629,14 @@ export async function markAllNotificationsAsRead(): Promise<boolean> {
   return res.ok;
 }
 
-export async function triggerTestNotification(tipo?: string): Promise<{ success: boolean; message: string }> {
+export async function triggerTestNotification(
+  tipo?: string,
+  companyId?: string
+): Promise<{ success: boolean; message: string }> {
   const res = await authFetch(`${API_BASE}/notifications/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tipo }),
+    body: JSON.stringify({ tipo, companyId }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

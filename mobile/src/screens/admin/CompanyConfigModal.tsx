@@ -369,7 +369,7 @@ export const CompanyConfigModal: React.FC<CompanyConfigModalProps> = ({
     setIsTestingNotif(true);
     setTestNotifResult(null);
     try {
-      const res = await triggerTestNotification(tipo);
+      const res = await triggerTestNotification(tipo, company.id || company.slug);
       setTestNotifResult({ success: true, message: res.message || 'Notificação disparada com sucesso!' });
       if (typeof window !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate?.([40, 30, 40]);

@@ -6,10 +6,11 @@ import { DashboardScreen } from './screens/DashboardScreen.js';
 import { ItemsScreen } from './screens/ItemsScreen.js';
 import { CustomersScreen } from './screens/CustomersScreen.js';
 import { CopilotScreen } from './screens/CopilotScreen.js';
-import { fetchDashboardOverview, fetchCustomerRegistrations, fetchNotifications } from './services/api.js';
+import { fetchDashboardOverview, fetchCustomerRegistrations, fetchNotifications, fetchUnreadNotificationCount } from './services/api.js';
 import { DashboardOverviewDTO, DashboardPeriod } from '@ai-db/shared';
 import { useAuth } from './context/useAuth.js';
 import { VoronLogo } from './components/VoronLogo.js';
+import { supabase } from './services/supabase.js';
 
 // Lazy-loaded heavy and route-conditional screens (Vercel Best Practice: bundle-dynamic-imports)
 const CustomerRegistrationScreen = lazy(() =>
@@ -53,17 +54,6 @@ export const App: React.FC = () => {
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
 
-  // Monitora contagem de notificações não lidas
-  useEffect(() => {
-    if (user && hasCompany) {
-      fetchNotifications()
-        .then((items) => {
-          const unread = items.filter((n) => !n.lida).length;
-          setUnreadNotificationsCount(unread);
-        })
-        .catch(() => {});
-    }
-  }, [user, hasCompany]);
 
   // Estados de Suspensão / Bloqueio de Acesso
   const [isSuspended, setIsSuspended] = useState(false);
@@ -106,6 +96,18 @@ export const App: React.FC = () => {
       localStorage.setItem('ai_db_selected_company', company.slug);
     }
   }, [company]);
+
+  // Monitora contagem de notificações não lidas
+  useEffect(() => {
+    if (user && (hasCompany || isAdmin)) {
+      fetchNotifications(effectiveCompanyId)
+        .then((items) => {
+          const unread = items.filter((n) => !n.lida).length;
+          setUnreadNotificationsCount(unread);
+        })
+        .catch(() => {});
+    }
+  }, [user, hasCompany, isAdmin, effectiveCompanyId]);
 
   const loadData = useCallback(async (
     isManualRefresh: boolean = false,
@@ -198,6 +200,56 @@ export const App: React.FC = () => {
       return () => clearInterval(interval);
     }
   }, [user, hasCompany, isAdmin, effectiveCompanyId]);
+
+  // Monitora contagem de notificações não lidas em tempo real via Supabase Realtime + Service Worker
+  useEffect(() => {
+    if (!user || (!hasCompany && !isAdmin) || !effectiveCompanyId) return;
+
+    // 1. Busca inicial
+    fetchUnreadNotificationCount(effectiveCompanyId)
+      .then(setUnreadNotificationsCount)
+      .catch((err) => console.warn('[App] Falha ao buscar contagem de notificações não lidas:', err));
+
+    // 2. Canal Realtime Supabase para sincronização instantânea
+    const channel = supabase
+      .channel(`realtime-badge-${effectiveCompanyId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_notifications',
+          filter: `company_id=eq.${effectiveCompanyId}`,
+        },
+        () => {
+          fetchUnreadNotificationCount(effectiveCompanyId)
+            .then(setUnreadNotificationsCount)
+            .catch(console.warn);
+        }
+      )
+      .subscribe();
+
+    // 3. Listener para mensagens enviadas pelo Service Worker (quando push chega ao aparelho)
+    const handlePushMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'PUSH_NOTIFICATION_RECEIVED') {
+        fetchUnreadNotificationCount(effectiveCompanyId)
+          .then(setUnreadNotificationsCount)
+          .catch(console.warn);
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handlePushMessage);
+    }
+
+    return () => {
+      supabase.removeChannel(channel);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handlePushMessage);
+      }
+    };
+  }, [user, hasCompany, isAdmin, effectiveCompanyId]);
+
 
   // Listener para histórico de navegação (botão Voltar/Avançar do navegador)
   useEffect(() => {
@@ -432,6 +484,7 @@ export const App: React.FC = () => {
               isOpen={isNotificationsDrawerOpen}
               onClose={() => setIsNotificationsDrawerOpen(false)}
               onUnreadCountChange={(count) => setUnreadNotificationsCount(count)}
+              companyId={effectiveCompanyId}
             />
           </Suspense>
         )}

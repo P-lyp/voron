@@ -1,9 +1,12 @@
 import webpush from 'web-push';
 import { supabase } from './supabase.js';
+import { CompanyService } from './companyService.js';
 import {
   AppNotificationDTO,
   NotificationType,
   PushSubscriptionPayload,
+  PushNotificationPayload,
+  NotificationFilterDTO,
 } from '@ai-db/shared';
 
 // Configuração ou geração sob demanda de chaves VAPID
@@ -19,19 +22,11 @@ if (!vapidPublicKey || !vapidPrivateKey) {
   console.log('[PushNotification] Chaves VAPID temporárias geradas para esta sessão:');
   console.log(`   Pública: ${vapidPublicKey}`);
   console.log(`   Privada: ${vapidPrivateKey.slice(0, 8)}... (oculta)`);
+} else {
+  console.log('[PushNotification] Chaves VAPID estáveis configuradas com sucesso via .env');
 }
 
 webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
-
-export interface PushNotificationPayload {
-  title: string;
-  body: string;
-  tipo: NotificationType;
-  icon?: string;
-  badge?: string;
-  url?: string;
-  data?: Record<string, any>;
-}
 
 export class NotificationService {
   private static instance: NotificationService;
@@ -50,13 +45,42 @@ export class NotificationService {
   }
 
   /**
+   * Converte slug ou identificador de empresa em um UUID válido cadastrado no Supabase
+   */
+  private async resolveCompanyUuid(companyIdOrSlug?: string | null): Promise<string | null> {
+    if (!companyIdOrSlug || companyIdOrSlug === 'null' || companyIdOrSlug === 'undefined') {
+      return null;
+    }
+    const clean = companyIdOrSlug.trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clean);
+    if (isUuid) {
+      return clean;
+    }
+    try {
+      const company = await CompanyService.getInstance().getCompanyBySlug(clean);
+      if (company?.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(company.id)) {
+        return company.id;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  /**
    * Salva ou atualiza a inscrição Push de um dispositivo
    */
   public async saveSubscription(
-    companyId: string,
+    companyIdOrSlug: string,
     userId: string | null,
     payload: PushSubscriptionPayload
   ): Promise<boolean> {
+    const companyId = await this.resolveCompanyUuid(companyIdOrSlug);
+    if (!companyId) {
+      console.warn('[NotificationService] saveSubscription ignorado: companyId inválido:', companyIdOrSlug);
+      return false;
+    }
+
     try {
       const { error } = await supabase.from('push_subscriptions').upsert(
         {
@@ -75,6 +99,19 @@ export class NotificationService {
         console.error('[NotificationService] Erro ao salvar push_subscription:', error.message);
         return false;
       }
+
+      // Se o mesmo usuário estiver registrando no mesmo dispositivo/navegador,
+      // limpa tokens anteriores obsoletos para evitar duplicidade de alertas no mesmo celular
+      if (userId && payload.userAgent) {
+        await supabase
+          .from('push_subscriptions')
+          .delete()
+          .eq('company_id', companyId)
+          .eq('user_id', userId)
+          .eq('user_agent', payload.userAgent)
+          .neq('endpoint', payload.endpoint);
+      }
+
       return true;
     } catch (err: any) {
       console.error('[NotificationService] Falha inesperada ao salvar push_subscription:', err.message);
@@ -102,13 +139,19 @@ export class NotificationService {
    * Cria registro in-app na tabela app_notifications
    */
   public async createAppNotification(
-    companyId: string,
+    companyIdOrSlug: string,
     userId: string | null,
     tipo: NotificationType,
     titulo: string,
     mensagem: string,
     dados: Record<string, any> = {}
   ): Promise<AppNotificationDTO | null> {
+    const companyId = await this.resolveCompanyUuid(companyIdOrSlug);
+    if (!companyId) {
+      console.warn('[NotificationService] createAppNotification ignorado: companyId não é um UUID válido:', companyIdOrSlug);
+      return null;
+    }
+
     try {
       const { data, error } = await supabase
         .from('app_notifications')
@@ -147,16 +190,44 @@ export class NotificationService {
   }
 
   /**
-   * Lista notificações recentes da empresa para a central in-app
+   * Lista notificações recentes da empresa para a central in-app com paginação e filtros
    */
-  public async listAppNotifications(companyId: string, limit: number = 30): Promise<AppNotificationDTO[]> {
+  public async listAppNotifications(
+    companyIdOrSlug: string,
+    filterOrLimit: NotificationFilterDTO | number = 30
+  ): Promise<AppNotificationDTO[]> {
+    const companyId = await this.resolveCompanyUuid(companyIdOrSlug);
+    if (!companyId) {
+      return [];
+    }
+
+    const filter: NotificationFilterDTO =
+      typeof filterOrLimit === 'number'
+        ? { limit: filterOrLimit }
+        : filterOrLimit;
+
+    const limit = Math.min(Math.max(filter.limit || 30, 1), 100);
+    const offset = Math.max(filter.offset || 0, 0);
+
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('app_notifications')
         .select('*')
-        .eq('company_id', companyId)
+        .eq('company_id', companyId);
+
+      if (filter.unreadOnly) {
+        query = query.eq('lida', false);
+      }
+
+      if (filter.tipo) {
+        query = query.eq('tipo', filter.tipo);
+      }
+
+      query = query
         .order('created_at', { ascending: false })
-        .limit(limit);
+        .range(offset, offset + limit - 1);
+
+      const { data, error } = await query;
 
       if (error || !data) {
         console.error('[NotificationService] Erro ao listar notificações:', error?.message);
@@ -181,9 +252,33 @@ export class NotificationService {
   }
 
   /**
+   * Retorna a contagem exata de notificações não lidas
+   */
+  public async getUnreadCount(companyIdOrSlug: string): Promise<number> {
+    const companyId = await this.resolveCompanyUuid(companyIdOrSlug);
+    if (!companyId) return 0;
+
+    try {
+      const { count, error } = await supabase
+        .from('app_notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('company_id', companyId)
+        .eq('lida', false);
+
+      if (error) return 0;
+      return count || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Marca notificação como lida
    */
-  public async markAsRead(id: string, companyId: string): Promise<boolean> {
+  public async markAsRead(id: string, companyIdOrSlug: string): Promise<boolean> {
+    const companyId = await this.resolveCompanyUuid(companyIdOrSlug);
+    if (!companyId) return false;
+
     try {
       const { error } = await supabase
         .from('app_notifications')
@@ -200,7 +295,10 @@ export class NotificationService {
   /**
    * Marca todas as notificações da empresa como lidas
    */
-  public async markAllAsRead(companyId: string): Promise<boolean> {
+  public async markAllAsRead(companyIdOrSlug: string): Promise<boolean> {
+    const companyId = await this.resolveCompanyUuid(companyIdOrSlug);
+    if (!companyId) return false;
+
     try {
       const { error } = await supabase
         .from('app_notifications')
@@ -215,13 +313,41 @@ export class NotificationService {
   }
 
   /**
+   * Remove inscrições push inativas/antigas (ex: mais de 90 dias sem atualização)
+   */
+  public async cleanStaleSubscriptions(daysInactive: number = 90): Promise<number> {
+    try {
+      const cutoffDate = new Date(Date.now() - daysInactive * 24 * 60 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from('push_subscriptions')
+        .delete()
+        .lt('updated_at', cutoffDate)
+        .select('id');
+
+      if (error) {
+        console.warn('[NotificationService] Falha na limpeza periódica de subscriptions:', error.message);
+        return 0;
+      }
+      return data?.length || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Dispara notificação push para todos os dispositivos inscritos da empresa
    * e salva no histórico in-app
    */
   public async sendPushToCompany(
-    companyId: string,
+    companyIdOrSlug: string,
     payload: PushNotificationPayload
   ): Promise<{ sent: number; failed: number }> {
+    const companyId = await this.resolveCompanyUuid(companyIdOrSlug);
+    if (!companyId) {
+      console.warn('[NotificationService] sendPushToCompany ignorado: companyId inválido:', companyIdOrSlug);
+      return { sent: 0, failed: 0 };
+    }
+
     // 1. Grava no histórico in-app
     await this.createAppNotification(
       companyId,
@@ -232,14 +358,84 @@ export class NotificationService {
       payload.data || {}
     );
 
-    // 2. Busca inscrições ativas da empresa
-    const { data: subs, error } = await supabase
+    // 2. Busca inscrições ativas da empresa (e também administradores globais sem company_id fixo)
+    console.log(`[PushNotification] Buscando inscrições Push para empresa ${companyId}...`);
+    const { data: rawSubs, error } = await supabase
       .from('push_subscriptions')
-      .select('endpoint, keys_p256dh, keys_auth')
-      .eq('company_id', companyId);
+      .select('id, endpoint, keys_p256dh, keys_auth, user_id, user_agent, company_id, updated_at')
+      .or(`company_id.eq.${companyId},company_id.is.null`)
+      .order('updated_at', { ascending: false });
 
-    if (error || !subs || subs.length === 0) {
+    if (error) {
+      console.error('[PushNotification] Erro ao consultar push_subscriptions:', error.message);
       return { sent: 0, failed: 0 };
+    }
+
+    if (!rawSubs || rawSubs.length === 0) {
+      console.warn(`[PushNotification] Nenhuma inscrição Push encontrada para empresa ${companyId} ou administradores.`);
+      return { sent: 0, failed: 0 };
+    }
+
+    // Deduplica inscrições do mesmo usuário no mesmo aparelho (mantém a mais recente e descarta tokens duplicados)
+    const seenUserDevice = new Set<string>();
+    const subs: typeof rawSubs = [];
+    const staleIdsToRemove: string[] = [];
+
+    for (const sub of rawSubs) {
+      if (sub.user_id && sub.user_agent) {
+        const deviceKey = `${sub.company_id || 'global'}:${sub.user_id}:${sub.user_agent}`;
+        if (seenUserDevice.has(deviceKey)) {
+          staleIdsToRemove.push(sub.id);
+          continue;
+        }
+        seenUserDevice.add(deviceKey);
+      }
+      subs.push(sub);
+    }
+
+    if (staleIdsToRemove.length > 0) {
+      (async () => {
+        try {
+          await supabase.from('push_subscriptions').delete().in('id', staleIdsToRemove);
+          console.log(`[PushNotification] ${staleIdsToRemove.length} inscrição(ões) duplicada(s) do mesmo aparelho removida(s) automaticamente.`);
+        } catch (delErr: any) {
+          console.warn('[PushNotification] Aviso ao limpar inscrições duplicadas:', delErr?.message);
+        }
+      })();
+    }
+
+    console.log(`[PushNotification] Encontrada(s) ${subs.length} inscrição(ões) apta(s) para receber o alerta.`);
+
+    // 3. Ajuste fino de TTL, Urgência e Tópico (RFC 8030 / Apple Web Push)
+    let ttlSeconds = 86400; // 24 horas por padrão
+    let urgencyLevel: 'high' | 'normal' = 'normal';
+    let topicString: string = payload.tag || `voron-${payload.tipo}`;
+
+    switch (payload.tipo) {
+      case 'offline':
+        ttlSeconds = 3600; // 1 hora
+        urgencyLevel = 'high';
+        topicString = 'voron-offline';
+        break;
+      case 'online':
+        ttlSeconds = 3600; // 1 hora
+        urgencyLevel = 'high';
+        topicString = 'voron-offline'; // Substitui o alerta de queda anterior
+        break;
+      case 'meta':
+      case 'pedido_expressivo':
+        ttlSeconds = 21600; // 6 horas
+        urgencyLevel = 'high';
+        break;
+      case 'fechamento':
+        ttlSeconds = 50400; // 14 horas
+        urgencyLevel = 'normal';
+        topicString = 'voron-fechamento';
+        break;
+      default:
+        ttlSeconds = 86400;
+        urgencyLevel = 'normal';
+        break;
     }
 
     const pushPayloadString = JSON.stringify({
@@ -248,47 +444,76 @@ export class NotificationService {
       tipo: payload.tipo,
       icon: payload.icon || '/icon-192.png',
       badge: payload.badge || '/favicon-32x32.png',
+      image: payload.image,
       url: payload.url || '/?tab=dashboard',
+      tag: topicString,
+      actions: payload.actions || [],
+      requireInteraction: payload.requireInteraction ?? (payload.tipo === 'offline'),
+      silent: payload.silent ?? false,
       data: payload.data || {},
-      timestamp: Date.now(),
+      timestamp: payload.timestamp || Date.now(),
     });
 
     let sent = 0;
     let failed = 0;
 
-    await Promise.allSettled(
-      subs.map(async (sub) => {
-        const pushSubscription = {
-          endpoint: sub.endpoint,
-          keys: {
-            p256dh: sub.keys_p256dh,
-            auth: sub.keys_auth,
-          },
-        };
+    // 4. Despacho em lotes controlados (chunks de 6) com timeout defensivo de 8s por envio
+    const BATCH_SIZE = 6;
+    for (let i = 0; i < subs.length; i += BATCH_SIZE) {
+      const batch = subs.slice(i, i + BATCH_SIZE);
 
-        try {
-          await webpush.sendNotification(pushSubscription, pushPayloadString, {
-            TTL: 60 * 60 * 24, // 24 horas de validade na fila push
-          });
-          sent++;
-        } catch (err: any) {
-          failed++;
-          // Se a assinatura expirou ou foi revogada pelo usuário (404/410), remove do banco
-          if (err.statusCode === 404 || err.statusCode === 410) {
-            console.log(`[PushNotification] Removendo endpoint expirado: ${sub.endpoint.slice(0, 35)}...`);
-            await this.removeSubscription(sub.endpoint);
-          } else {
-            console.warn(`[PushNotification] Erro ao enviar para endpoint: ${err.message}`);
+      await Promise.allSettled(
+        batch.map(async (sub) => {
+          const pushSubscription = {
+            endpoint: sub.endpoint,
+            keys: {
+              p256dh: sub.keys_p256dh,
+              auth: sub.keys_auth,
+            },
+          };
+
+          try {
+            // Omitimos o cabeçalho HTTP 'topic' pois o Apple APNs (web.push.apple.com) rejeita strings customizadas com BadWebPushTopic.
+            // O agrupamento e substituição de alertas é realizado de forma segura via payload.tag no Service Worker do cliente.
+            const sendPromise = webpush.sendNotification(pushSubscription, pushPayloadString, {
+              TTL: ttlSeconds,
+              urgency: urgencyLevel,
+            });
+
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Timeout de 8s ao despachar push')), 8000)
+            );
+
+            const res: any = await Promise.race([sendPromise, timeoutPromise]);
+            console.log(`[PushNotification] Push entregue ao gateway (${sub.endpoint.includes('apple') ? 'Apple APNs' : 'WebPush'}) [Status: ${res.statusCode}]: ${sub.endpoint.slice(0, 45)}...`);
+            sent++;
+          } catch (err: any) {
+            failed++;
+            console.error(`[PushNotification] Falha ao enviar para ${sub.endpoint.slice(0, 45)}...`);
+            console.error(`   Status HTTP: ${err.statusCode || 'N/A'} - Detalhe: ${err.message}`);
+            if (err.body) {
+              console.error(`   Resposta do serviço Push:`, err.body);
+            }
+
+            // Descarta endpoints inválidos (404/410/403 ou VapidPkHashMismatch)
+            const bodyStr = typeof err.body === 'string' ? err.body : JSON.stringify(err.body || '');
+            const isVapidMismatch = err.statusCode === 400 && bodyStr.includes('VapidPkHashMismatch');
+            const isBadDevice = err.statusCode === 404 || err.statusCode === 410 || err.statusCode === 403 || isVapidMismatch;
+
+            if (isBadDevice) {
+              console.log(`[PushNotification] Descartando endpoint inválido/revogado do banco: ${sub.endpoint.slice(0, 38)}... (Motivo: HTTP ${err.statusCode || 400})`);
+              await this.removeSubscription(sub.endpoint);
+            }
           }
-        }
-      })
-    );
+        })
+      );
+    }
 
     return { sent, failed };
   }
 
   // ========================================================
-  // DISPARADORES ESPECÍFICOS DA OPÇÃO A
+  // DISPARADORES ESPECÍFICOS DE NEGÓCIO DO VORON
   // ========================================================
 
   /**
@@ -306,7 +531,13 @@ export class NotificationService {
       title,
       body,
       tipo: 'offline',
-      data: { toleranceMinutes, companyName },
+      tag: 'voron-offline',
+      requireInteraction: true,
+      url: '/?tab=admin',
+      actions: [
+        { action: 'check_status', title: 'Verificar Túnel' },
+      ],
+      data: { toleranceMinutes, companyName, critical: true },
     });
   }
 
@@ -321,6 +552,8 @@ export class NotificationService {
       title,
       body,
       tipo: 'online',
+      tag: 'voron-offline', // Mesmo tópico: substitui o alerta de queda
+      url: '/?tab=dashboard',
       data: { companyName },
     });
   }
@@ -356,6 +589,11 @@ export class NotificationService {
       title: `Fechamento do Dia - ${companyName}`,
       body,
       tipo: 'fechamento',
+      tag: 'voron-fechamento',
+      url: '/?tab=dashboard',
+      actions: [
+        { action: 'open_dashboard', title: 'Ver Faturamento' },
+      ],
       data: dados,
     });
   }
@@ -390,6 +628,11 @@ export class NotificationService {
       title,
       body,
       tipo: 'meta',
+      tag: `voron-meta-${percentual}`,
+      url: '/?tab=dashboard',
+      actions: [
+        { action: 'open_dashboard', title: 'Ver Metas' },
+      ],
       data: { percentual, totalVendas, metaDiaria },
     });
   }
@@ -417,6 +660,11 @@ export class NotificationService {
       title: `Pedido Expressivo - ${companyName}`,
       body,
       tipo: 'pedido_expressivo',
+      tag: 'voron-pedido',
+      url: '/?tab=dashboard',
+      actions: [
+        { action: 'open_dashboard', title: 'Ver Vendas' },
+      ],
       data: { valorPedido, cliente, vendedor },
     });
   }

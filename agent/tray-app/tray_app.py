@@ -143,7 +143,7 @@ def load_agent_env():
         "FIREBIRD_PASSWORD": "masterkey",
         "COMPANY_ID": "empresa-piloto-001",
         "AGENT_TOKEN": "token-secreto-agente-001",
-        "CLOUD_GATEWAY_URL": "ws://localhost:3001/agent-tunnel",
+        "CLOUD_GATEWAY_URL": "wss://voronapi.onrender.com/agent-tunnel",
     }
     if os.path.exists(env_file):
         try:
@@ -155,24 +155,87 @@ def load_agent_env():
                         config[k.strip()] = v.strip().strip('"').strip("'")
         except Exception as e:
             log_tray(f"Erro ao ler .env: {e}")
+
+    gw = config.get("CLOUD_GATEWAY_URL", "")
+    if gw.startswith("ws://") and not any(h in gw for h in ["localhost", "127.0.0.1"]):
+        config["CLOUD_GATEWAY_URL"] = "wss://" + gw[5:]
+    elif gw.startswith("wss://") and any(h in gw for h in ["localhost", "127.0.0.1"]):
+        config["CLOUD_GATEWAY_URL"] = "ws://" + gw[6:]
+
     return config
 
-def create_circle_icon(color="green"):
+_ICON_CACHE = {}
+
+def get_asset_path(filename):
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        bundle_path = os.path.join(sys._MEIPASS, 'assets', filename)
+        if os.path.exists(bundle_path):
+            return bundle_path
+
+    candidates = [
+        os.path.join(AGENT_DIR, "assets", filename),
+        os.path.join(EXE_DIR, "assets", filename),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", filename),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", filename),
+        os.path.join(AGENT_DIR, filename),
+        os.path.join(EXE_DIR, filename),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+def create_fallback_voron_icon(color="green"):
     width = 64
     height = 64
     image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     dc = ImageDraw.Draw(image)
 
-    colors = {
-        "green": ("#0f763e", "#22c55e"),
-        "red": ("#b91c1c", "#ef4444"),
-        "yellow": ("#b45309", "#f59e0b")
-    }
-    border, fill = colors.get(color, colors["green"])
+    # Squircle branco com borda
+    dc.rounded_rectangle((2, 2, 61, 61), radius=15, fill="#ffffff", outline="#cbd5e1", width=2)
+    # Silhueta representativa do corvo
+    dc.ellipse((14, 12, 48, 52), fill="#06261c")
+    dc.polygon([(40, 20), (54, 25), (42, 33)], fill="#06261c")
+    dc.ellipse((28, 18, 33, 23), fill="#ffffff")
 
-    dc.ellipse((4, 4, 60, 60), fill=fill, outline=border, width=5)
-    dc.ellipse((22, 22, 42, 42), fill="white")
+    # Status badge no canto inferior direito
+    badge_colors = {
+        "green": "#16a34a",
+        "yellow": "#f59e0b",
+        "red": "#dc2626"
+    }
+    b_fill = badge_colors.get(color, "#16a34a")
+    dc.ellipse((38, 38, 62, 62), fill=b_fill, outline="#ffffff", width=2)
     return image
+
+def get_tray_icon(color="green"):
+    global _ICON_CACHE
+    if color in _ICON_CACHE:
+        return _ICON_CACHE[color]
+
+    icon_filenames = {
+        "green": ["voron_tray_online_64.png", "voron_tray_online.png"],
+        "yellow": ["voron_tray_warning_64.png", "voron_tray_warning.png"],
+        "red": ["voron_tray_offline_64.png", "voron_tray_offline.png"],
+    }
+
+    files = icon_filenames.get(color, icon_filenames["green"])
+    for f in files:
+        p = get_asset_path(f)
+        if p and os.path.exists(p):
+            try:
+                img = Image.open(p).convert("RGBA")
+                _ICON_CACHE[color] = img
+                return img
+            except Exception as e:
+                log_tray(f"Erro ao carregar icone {p}: {e}")
+
+    img = create_fallback_voron_icon(color)
+    _ICON_CACHE[color] = img
+    return img
+
+def create_circle_icon(color="green"):
+    return get_tray_icon(color)
 
 class AgentTrayApp:
     def __init__(self):
@@ -304,13 +367,18 @@ class AgentTrayApp:
     def check_backend_online(self):
         config = load_agent_env()
         company_id = config.get("COMPANY_ID", "empresa-piloto-001")
-        gateway_url = config.get("CLOUD_GATEWAY_URL", "ws://localhost:3001/agent-tunnel")
+        gateway_url = config.get("CLOUD_GATEWAY_URL", "wss://voronapi.onrender.com/agent-tunnel").strip()
 
-        http_url = gateway_url.replace("ws://", "http://").replace("wss://", "https://")
+        if gateway_url.startswith("ws://") and not any(h in gateway_url for h in ["localhost", "127.0.0.1"]):
+            gateway_url = "wss://" + gateway_url[5:]
+        elif gateway_url.startswith("wss://") and any(h in gateway_url for h in ["localhost", "127.0.0.1"]):
+            gateway_url = "ws://" + gateway_url[6:]
+
+        http_url = gateway_url.replace("wss://", "https://").replace("ws://", "http://")
         if "/agent-tunnel" in http_url:
             base_url = http_url.split("/agent-tunnel")[0]
         else:
-            base_url = "http://localhost:3001"
+            base_url = "http://localhost:3001" if "localhost" in gateway_url or "127.0.0.1" in gateway_url else "https://voronapi.onrender.com"
 
         status_url = f"{base_url}/api/status?companyId={company_id}"
 
@@ -318,7 +386,7 @@ class AgentTrayApp:
         tunnel_online = False
         try:
             req = urllib.request.Request(status_url, headers={'User-Agent': 'AgentTray/1.0'})
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
                 if resp.status == 200:
                     backend_reachable = True
                     data = json.loads(resp.read().decode('utf-8'))
@@ -362,11 +430,11 @@ class AgentTrayApp:
 
         if self.icon:
             try:
-                self.icon.icon = create_circle_icon(icon_color)
+                self.icon.icon = get_tray_icon(icon_color)
                 if not backend_reachable and self.is_process_running:
-                    self.icon.title = f"Agente ERP Firebird: Backend Inalcançável ({base_url})"
+                    self.icon.title = f"Voron: Backend Inalcançável ({base_url})"
                 else:
-                    self.icon.title = f"Agente ERP Firebird: {self.status}"
+                    self.icon.title = f"Voron: {self.status}"
             except:
                 pass
 
@@ -630,7 +698,7 @@ class AgentTrayApp:
 
         self.icon = pystray.Icon(
             "voron_agent",
-            create_circle_icon("green" if self.is_connected else "yellow" if self.is_process_running else "red"),
+            get_tray_icon("green" if self.is_connected else "yellow" if self.is_process_running else "red"),
             title=f"Voron: {self.status}",
             menu=self.build_menu()
         )

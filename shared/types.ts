@@ -376,6 +376,28 @@ export interface AppNotificationDTO {
   createdAt: string;
 }
 
+export interface PushNotificationAction {
+  action: string;
+  title: string;
+  icon?: string;
+}
+
+export interface PushNotificationPayload {
+  title: string;
+  body: string;
+  tipo: NotificationType;
+  icon?: string;
+  badge?: string;
+  image?: string;
+  url?: string;
+  tag?: string;
+  actions?: PushNotificationAction[];
+  requireInteraction?: boolean;
+  silent?: boolean;
+  data?: Record<string, any>;
+  timestamp?: number;
+}
+
 export interface PushSubscriptionPayload {
   endpoint: string;
   keys: {
@@ -383,6 +405,15 @@ export interface PushSubscriptionPayload {
     auth: string;
   };
   userAgent?: string;
+  deviceType?: 'mobile' | 'desktop' | 'tablet';
+  isStandalone?: boolean;
+}
+
+export interface NotificationFilterDTO {
+  limit?: number;
+  offset?: number;
+  unreadOnly?: boolean;
+  tipo?: NotificationType;
 }
 
 export interface CadastroClientesConfig {

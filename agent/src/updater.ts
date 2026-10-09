@@ -20,7 +20,20 @@ export interface UpdaterOptions {
 export class AgentUpdater {
   // Converte a URL do Gateway WebSocket (ws:// ou wss://) para a URL base HTTP/HTTPS da API
   public static resolveHttpBaseUrl(gatewayUrl: string): string {
-    return gatewayUrl
+    let url = (gatewayUrl || '').trim();
+    if (
+      url.startsWith('ws://') &&
+      !url.includes('localhost') &&
+      !url.includes('127.0.0.1')
+    ) {
+      url = url.replace(/^ws:\/\//i, 'wss://');
+    } else if (
+      url.startsWith('wss://') &&
+      (url.includes('localhost') || url.includes('127.0.0.1'))
+    ) {
+      url = url.replace(/^wss:\/\//i, 'ws://');
+    }
+    return url
       .replace(/^ws:\/\//i, 'http://')
       .replace(/^wss:\/\//i, 'https://')
       .replace(/\/agent-tunnel\/?$/i, '');

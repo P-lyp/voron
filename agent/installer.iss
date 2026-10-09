@@ -41,7 +41,8 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=force
 
-; Informacoes de desinstalacao
+; Informacoes de desinstalacao e icones
+SetupIconFile=assets\config_voron.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
 
@@ -79,14 +80,17 @@ Source: ".env.example"; DestDir: "{app}"; Flags: ignoreversion
 ; 5. Binario do Node.js Standalone (opcional se fornecido na pasta)
 Source: "node.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
+; 6. Icones e Recursos Visuais Oficiais
+Source: "assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 [Icons]
 ; Atalhos no Menu Iniciar
-Name: "{group}\{#MyAppName} - Configurador"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{#MyAppName} - Monitor de Bandeja"; Filename: "{app}\{#MyTrayExeName}"
+Name: "{group}\{#MyAppName} - Configurador"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName} - Monitor de Bandeja"; Filename: "{app}\{#MyTrayExeName}"; IconFilename: "{app}\{#MyTrayExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 ; Atalho Opcional na Area de Trabalho
-Name: "{autodesktop}\Configurar Agente Voron"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\Configurar Agente Voron"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
 ; Registra a bandeja para inicializar com o Windows para qualquer usuario da maquina (HKLM)
